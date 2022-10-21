@@ -412,7 +412,7 @@ class CaiT(nn.Cell):
         x = self.pos_drop(x)
         
         for i , blk in enumerate(self.blocks):
-            cls_tokens = blk(x)
+            x = blk(x)
         #x = self.blocks(x)                        
         for i , blk in enumerate(self.blocks_token_only):
             cls_tokens = blk(x,cls_tokens)
@@ -451,11 +451,8 @@ def cait_S24_224(pretrained: bool = False, num_classes: int = 1000, in_channels=
                  depth_token_only=2,
                  **kwargs)
     
-    #default_cfg = _cfg(url="https://dl.fbaipublicfiles.com/deit/S24_224.pth")
-    #default_cfg = _cfg(url="D:\Mindspore\Minspore模型迁移\mindspore_classification_master\cait_S24_224.ckpt")
-    
     if pretrained:
-        load_pretrained(model, default_cfg, num_classes=num_classes, in_channels=in_channels)
+        load_pretrained(model, _cfg, num_classes=num_classes, in_channels=in_channels)
     return model 
 
 @register_model
@@ -474,9 +471,8 @@ def cait_S24_384(pretrained: bool = False, num_classes: int = 1000, in_channels=
                  depth_token_only=2,
                  **kwargs)
     
-    default_cfg = _cfg(url="https://dl.fbaipublicfiles.com/deit/S24_384.pth")
     if pretrained:
-        load_pretrained(model, default_cfg, num_classes=num_classes, in_channels=in_channels)
+        load_pretrained(model, _cfg, num_classes=num_classes, in_channels=in_channels)
     return model 
 
 @register_model
@@ -495,9 +491,8 @@ def cait_XS24(pretrained: bool = False, num_classes: int = 1000, in_channels=3, 
                  depth_token_only=2,
                  **kwargs)
     
-    default_cfg = _cfg(url="https://dl.fbaipublicfiles.com/deit/XS24_384.pth")
     if pretrained:
-        load_pretrained(model, default_cfg, num_classes=num_classes, in_channels=in_channels)
+        load_pretrained(model, _cfg, num_classes=num_classes, in_channels=in_channels)
     return model
     
 @register_model
@@ -516,9 +511,8 @@ def cait_S36(pretrained: bool = False, num_classes: int = 1000, in_channels=3, *
                  depth_token_only=2,
                  **kwargs)
     
-    default_cfg = _cfg(url="https://dl.fbaipublicfiles.com/deit/S36_384.pth")
     if pretrained:
-        load_pretrained(model, default_cfg, num_classes=num_classes, in_channels=in_channels)
+        load_pretrained(model, _cfg, num_classes=num_classes, in_channels=in_channels)
     return model 
     
 @register_model
@@ -537,9 +531,8 @@ def cait_M36(pretrained: bool = False, num_classes: int = 1000, in_channels=3, *
                  depth_token_only=2,
                  **kwargs)
     
-    default_cfg = _cfg(url="https://dl.fbaipublicfiles.com/deit/M36_384.pth")
     if pretrained:
-        load_pretrained(model, default_cfg, num_classes=num_classes, in_channels=in_channels)
+        load_pretrained(model, _cfg, num_classes=num_classes, in_channels=in_channels)
     return model 
     
 @register_model
@@ -558,7 +551,6 @@ def cait_M48(pretrained: bool = False, num_classes: int = 1000, in_channels=3, *
                  depth_token_only=2,
                  **kwargs)
     
-    default_cfg = _cfg(url="https://dl.fbaipublicfiles.com/deit/M48_448.pth")
     if pretrained:
-        load_pretrained(model, default_cfg, num_classes=num_classes, in_channels=in_channels)
+        load_pretrained(model, _cfg, num_classes=num_classes, in_channels=in_channels)
     return model 

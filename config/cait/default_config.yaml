@@ -19,7 +19,7 @@ distribute: False
 num_parallel_workers: 8
 
 # dataset config
-#dataset: 'imagenet' 
+dataset: 'imagenet' 
 data_dir: './' # 
 shuffle: True 
 dataset_download: False #
