@@ -12,7 +12,9 @@ from mindspore import Tensor, Parameter
 import mindspore.common.initializer as init
 from mindspore.common.initializer import TruncatedNormal
 
+from .layers.patch_embed import PatchEmbed
 from .layers.drop_path import DropPath
+from .layers.mlp import Mlp
 from .utils import load_pretrained
 from .registry import register_model
 
@@ -33,33 +35,6 @@ def _cfg(url='', **kwargs):
         'first_conv': '', 'classifier': '',
         **kwargs
     }
-
-
-class PatchEmbedding(nn.Cell):
-
-    def __init__(self,
-                 img_size: int = 224,
-                 patch_size: int = 16,
-                 embed_dim: int = 768,
-                 in_channels: int = 3,
-                 norm_layer = None) -> None:
-        super(PatchEmbedding, self).__init__()
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.num_patches = (img_size // patch_size) ** 2
-        
-        self.conv = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size, has_bias=True)
-        self.norm = norm_layer((embed_dim,)) if norm_layer else nn.Identity()
-
-    def construct(self, x: Tensor) -> Tensor:
-        x = self.conv(x)
-        B, C, H, W = x.shape
-        x = ops.reshape(x, (B, C, H * W))
-        x = ops.transpose(x, (0, 2, 1))
-        x = self.norm(x)
-        return x
-
-
 
 class Class_Attention(nn.Cell):
 
@@ -110,39 +85,13 @@ class Class_Attention(nn.Cell):
         x_cls = self.proj_drop(x_cls)
         
         return x_cls
-     
-
-class FeedForward(nn.Cell):
-
-    def __init__(self,
-                 in_channels: int,
-                 hidden_channels: int = None,
-                 out_channels: int = None,
-                 act_layer: nn.Cell = nn.GELU,
-                 drop: float = 0.) -> None:
-        super(FeedForward, self).__init__()
-        out_channels = out_channels or in_channels
-        hidden_channels = hidden_channels or in_channels
-        self.fc1 = nn.Dense(in_channels, hidden_channels)
-        self.activation = act_layer()
-        self.fc2 = nn.Dense(hidden_channels, out_channels)
-        self.dropout = nn.Dropout(1 - drop)
-
-    def construct(self, x: Tensor) -> Tensor:
-        x = self.fc1(x)
-        x = self.activation(x)
-        x = self.dropout(x)
-        x = self.fc2(x)
-        x = self.dropout(x)
-        return x
-
 
 class LayerScale_Block_CA(nn.Cell):
 
     def __init__(self,
                  dim: int,
                  num_heads: int,
-                 ffd_ratio: float = 4.,
+                 mlp_ratio: float = 4.,
                  qkv_bias: bool = False,
                  qk_scale: float = None,
                  drop: float = 0.,
@@ -162,10 +111,9 @@ class LayerScale_Block_CA(nn.Cell):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         
         self.norm2 = norm_layer((dim,))
-        self.ffd = FeedForward(in_channels=dim,
-                               hidden_channels=int(dim * ffd_ratio),
-                               act_layer=act_layer,
-                               drop=drop)
+        self.mlp = Mlp(in_features=dim,
+                       hidden_features=int(dim * mlp_ratio),
+                       drop=drop)
 
         self.gamma_1 = Parameter(init_values * ops.ones((dim), ms.float32), requires_grad=True)
         self.gamma_2 = Parameter(init_values * ops.ones((dim), ms.float32), requires_grad=True)
@@ -174,7 +122,7 @@ class LayerScale_Block_CA(nn.Cell):
         
         u = ops.concat((x_cls,x), axis=1)
         x_cls = x_cls + self.drop_path(self.gamma_1 * self.attn(self.norm1(u)))
-        x_cls = x_cls + self.drop_path(self.gamma_2 * self.ffd(self.norm2(x_cls)))
+        x_cls = x_cls + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x_cls)))
         
         return x_cls
 
@@ -201,10 +149,10 @@ class Attention_talking_head(nn.Cell):
         self.qkv = nn.Dense(dim, dim * 3, has_bias=qkv_bias)
         self.attn_drop = nn.Dropout(1 - attn_drop)
         
-        self.proj = nn.Dense(dim, dim)
+        self.proj = nn.Dense(dim, dim, has_bias=False)
         
-        self.proj_l = nn.Dense(num_heads, num_heads)
-        self.proj_w = nn.Dense(num_heads, num_heads)
+        self.proj_l = nn.Dense(num_heads, num_heads, has_bias=False)
+        self.proj_w = nn.Dense(num_heads, num_heads, has_bias=False)
         
         self.proj_drop = nn.Dropout(1 - proj_drop)
         
@@ -247,7 +195,7 @@ class LayerScale_Block_SA(nn.Cell):
     def __init__(self,
                  dim: int,
                  num_heads: int,
-                 ffd_ratio: float = 4.,
+                 mlp_ratio: float = 4.,
                  qkv_bias: bool = False,
                  qk_scale: float = None,
                  drop: float = 0.,
@@ -267,10 +215,9 @@ class LayerScale_Block_SA(nn.Cell):
                                            proj_drop=drop)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer((dim,))
-        self.ffd = FeedForward(in_channels=dim,
-                               hidden_channels=int(dim * ffd_ratio),
-                               act_layer=act_layer,
-                               drop=drop)
+        self.mlp = Mlp(in_features=dim,
+                       hidden_features=int(dim * mlp_ratio),
+                       drop=drop)
                              
         self.gamma_1 = Parameter(init_values * ops.ones((dim), ms.float32), requires_grad=True)
         self.gamma_2 = Parameter(init_values * ops.ones((dim), ms.float32), requires_grad=True)
@@ -278,7 +225,7 @@ class LayerScale_Block_SA(nn.Cell):
     def construct(self, x: Tensor) -> Tensor:
 
         x = x + self.drop_path(self.gamma_1 * self.attn(self.norm1(x)))
-        x = x + self.drop_path(self.gamma_2 * self.ffd(self.norm2(x)))
+        x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x)))
         return x 
         
         
@@ -292,7 +239,7 @@ class CaiT(nn.Cell):
                  embed_dim: int = 768,
                  depth: int = 12,
                  num_heads: int = 12,
-                 ffd_ratio: float = 4.,
+                 mlp_ratio: float = 4.,
                  qkv_bias: bool = False,
                  qk_scale: float = None,
                  drop: float = 0.,
@@ -302,17 +249,16 @@ class CaiT(nn.Cell):
                  act_layer: nn.Cell = nn.GELU,
                  init_values: float = 1e-4,
                  depth_token_only: int = 2,
-                 ffd_ratio_clstk: float = 4.0) -> None:
+                 mlp_ratio_clstk: float = 4.0) -> None:
         super(CaiT, self).__init__()
             
         self.num_classes = num_classes
         self.embed_dim = embed_dim
-        #self.num_features = self.embed_dim = embed_dim  
 
-        self.patch_embed = PatchEmbedding(img_size=img_size,
-                                          patch_size=patch_size,
-                                          embed_dim=embed_dim,
-                                          in_channels=in_channels)
+        self.patch_embed = PatchEmbed(image_size=img_size,
+                                      patch_size=patch_size,
+                                      in_chans=in_channels,
+                                      embed_dim=embed_dim)
         
         num_patches = self.patch_embed.num_patches
         
@@ -329,7 +275,7 @@ class CaiT(nn.Cell):
         self.blocks = nn.CellList([
             LayerScale_Block_SA(dim=embed_dim,
                                 num_heads=num_heads,
-                                ffd_ratio=ffd_ratio,
+                                mlp_ratio=mlp_ratio,
                                 qkv_bias=qkv_bias,
                                 qk_scale=qk_scale,
                                 drop=drop,
@@ -339,28 +285,10 @@ class CaiT(nn.Cell):
                                 norm_layer=norm_layer,
                                 init_values=init_values)
             for i in range(depth)])
-        '''
-        for i in range(depth):
-            self.blocks.append(
-                nn.SequentialCell([
-                    LayerScale_Block_SA(dim=embed_dim,
-                                        num_heads=num_heads,
-                                        ffd_ratio=ffd_ratio,
-                                        qkv_bias=qkv_bias,
-                                        qk_scale=qk_scale,
-                                        drop=drop,
-                                        attn_drop=attn_drop,
-                                        drop_path=dpr[i],
-                                        act_layer=act_layer,
-                                        norm_layer=norm_layer,
-                                        init_values=init_values)
-                ])
-            )
-        '''    
         self.blocks_token_only = nn.CellList([
             LayerScale_Block_CA(dim=embed_dim,
                                 num_heads=num_heads,
-                                ffd_ratio=ffd_ratio,
+                                mlp_ratio=mlp_ratio,
                                 qkv_bias=qkv_bias,
                                 qk_scale=qk_scale,
                                 drop=0.0,
@@ -369,16 +297,11 @@ class CaiT(nn.Cell):
                                 act_layer=act_layer,
                                 norm_layer=norm_layer,
                                 init_values=init_values)
-            for i in range(depth_token_only)])
-
-        #self.blocks = nn.SequentialCell(self.blocks)
-        #self.blocks_token_only = nn.SequentialCell(self.blocks_token_only)
-        
+            for i in range(depth_token_only)])      
         
         self.norm = norm_layer((embed_dim,))
 
         self.head = nn.Dense(embed_dim, num_classes) if num_classes > 0 else nn.Identity()
-        #self.feature_info = [dict(num_chs=embed_dim, reduction=0, module='head')]
         
         self.pos_embed = init.initializer(TruncatedNormal(sigma=0.02), self.pos_embed.shape, ms.float32)
         self.cls_token = init.initializer(TruncatedNormal(sigma=0.02), self.cls_token.shape, ms.float32)
@@ -390,16 +313,9 @@ class CaiT(nn.Cell):
             if isinstance(m, nn.Dense):
                 m.weight = init.initializer(TruncatedNormal(sigma=0.02), m.weight.shape, ms.float32)
                 if m.bias is not None:
-                    #const = init.Constant(value=0)
-                    #const(m.bias)
                     m.bias.set_data(init.initializer(init.Constant(0), m.bias.shape))
             elif isinstance(m, nn.LayerNorm):
-                #const = init.Constant(value=0)
-                #const(m.beta)
-                
                 m.beta.set_data(init.initializer(init.Constant(0), m.beta.shape))
-                #const = init.Constant(value=1.0)
-                #const(m.gamma)
                 m.gamma.set_data(init.initializer(init.Constant(1), m.gamma.shape))
 
     def forward_features(self, x: Tensor) -> Tensor:
@@ -412,11 +328,9 @@ class CaiT(nn.Cell):
         x = self.pos_drop(x)
         
         for i , blk in enumerate(self.blocks):
-            x = blk(x)
-        #x = self.blocks(x)                        
+            x = blk(x)              
         for i , blk in enumerate(self.blocks_token_only):
             cls_tokens = blk(x,cls_tokens)
-        #cls_tokens = blocks_token_only(x, cls_tokens)
 
         x = ops.concat((cls_tokens, x), axis=1)    
                 
@@ -430,7 +344,6 @@ class CaiT(nn.Cell):
 
     def construct(self, x: Tensor) -> Tensor:
         x = self.forward_features(x)
-        #print(x.shape)
         x = self.forward_head(x)
         return x
 
@@ -442,10 +355,10 @@ def cait_S24_224(pretrained: bool = False, num_classes: int = 1000, in_channels=
                  in_channels=in_channels,
                  num_classes=num_classes,
                  embed_dim=384,
-                 depth=24,
+                 depth=2,
                  num_heads=8,
-                 ffd_ratio=4,
-                 qkv_bias=True,
+                 mlp_ratio=4,
+                 qkv_bias=False,
                  norm_layer=partial(nn.LayerNorm, epsilon=1e-6),
                  init_values=1e-5,
                  depth_token_only=2,
@@ -464,8 +377,8 @@ def cait_S24_384(pretrained: bool = False, num_classes: int = 1000, in_channels=
                  embed_dim=384,
                  depth=24,
                  num_heads=8,
-                 ffd_ratio=4,
-                 qkv_bias=True,
+                 mlp_ratio=4,
+                 qkv_bias=False,
                  norm_layer=partial(nn.LayerNorm, epsilon=1e-6),
                  init_values=1e-5,
                  depth_token_only=2,
@@ -484,8 +397,8 @@ def cait_XS24(pretrained: bool = False, num_classes: int = 1000, in_channels=3, 
                  embed_dim=288,
                  depth=24,
                  num_heads=6,
-                 ffd_ratio=4,
-                 qkv_bias=True,
+                 mlp_ratio=4,
+                 qkv_bias=False,
                  norm_layer=partial(nn.LayerNorm, epsilon=1e-6),
                  init_values=1e-5,
                  depth_token_only=2,
@@ -504,8 +417,8 @@ def cait_S36(pretrained: bool = False, num_classes: int = 1000, in_channels=3, *
                  embed_dim=384,
                  depth=36,
                  num_heads=8,
-                 ffd_ratio=4,
-                 qkv_bias=True,
+                 mlp_ratio=4,
+                 qkv_bias=False,
                  norm_layer=partial(nn.LayerNorm, epsilon=1e-6),
                  init_values=1e-6,
                  depth_token_only=2,
@@ -524,8 +437,8 @@ def cait_M36(pretrained: bool = False, num_classes: int = 1000, in_channels=3, *
                  embed_dim=768,
                  depth=36,
                  num_heads=16,
-                 ffd_ratio=4,
-                 qkv_bias=True,
+                 mlp_ratio=4,
+                 qkv_bias=False,
                  norm_layer=partial(nn.LayerNorm, epsilon=1e-6),
                  init_values=1e-6,
                  depth_token_only=2,
@@ -544,8 +457,8 @@ def cait_M48(pretrained: bool = False, num_classes: int = 1000, in_channels=3, *
                  embed_dim=768,
                  depth=48,
                  num_heads=16,
-                 ffd_ratio=4,
-                 qkv_bias=True,
+                 mlp_ratio=4,
+                 qkv_bias=False,
                  norm_layer=partial(nn.LayerNorm, epsilon=1e-6),
                  init_values=1e-6,
                  depth_token_only=2,
