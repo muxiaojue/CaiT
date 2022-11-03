@@ -355,7 +355,7 @@ def cait_S24_224(pretrained: bool = False, num_classes: int = 1000, in_channels=
                  in_channels=in_channels,
                  num_classes=num_classes,
                  embed_dim=384,
-                 depth=2,
+                 depth=24,
                  num_heads=8,
                  mlp_ratio=4,
                  qkv_bias=False,
